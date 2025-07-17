@@ -1,14 +1,16 @@
 import streamlit as st
-import openai
 import tempfile
 import os
+import json
+from openai import OpenAI
 
+# Configuration de la page
 st.set_page_config(page_title="🎙️ Commande vocale Toons", layout="centered")
 st.title("🎙️ Assistant vocal Toons")
 st.subheader("Parlez, l'IA comprend votre commande")
 
-# Clé API OpenAI (tu dois la définir dans ton environnement Streamlit Cloud)
-openai.api_key = st.secrets["openai_api_key"]
+# Client OpenAI (nouvelle API)
+client = OpenAI(api_key=st.secrets["openai_api_key"])
 
 # Enregistrement vocal
 st.info("Cliquez ci-dessous pour enregistrer votre commande :")
@@ -20,33 +22,41 @@ if audio_file is not None:
         tmp_path = tmp_file.name
 
     with st.spinner("🧠 Transcription en cours avec Whisper..."):
-        transcript = openai.Audio.transcribe(
-            model="whisper-1",
-            file=open(tmp_path, "rb")
-        )
-        commande_brute = transcript["text"]
+        with open(tmp_path, "rb") as f:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f
+            )
+        commande_brute = transcript.text
 
     st.success("Commande reconnue :")
     st.write(f"🗣️ {commande_brute}")
 
     with st.spinner("🧠 Interprétation par l'IA..."):
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Tu es un assistant de commande pour un snack. Tu dois structurer clairement la commande pour qu'elle soit transmise au restaurateur. N'invente rien."},
+                {
+                    "role": "system",
+                    "content": """
+Tu es un assistant de commande pour un snack rapide. À partir de la phrase utilisateur, extrais et renvoie STRICTEMENT un objet JSON à 5 clés :
+- "produit" (string) : ex. "kebab"
+- "pain" (string) : ex. "galette"
+- "sauces" (array of strings) : ex. ["blanche"]
+- "crudites" (array of strings) : ex. ["oignons"] (mettre [] si rien)
+- "boisson" (string or null) : ex. "coca" ou null
+
+N’envoie que ce JSON, sans texte additionnel ni mise en forme Markdown.
+"""
+                },
                 {"role": "user", "content": commande_brute}
             ]
         )
-        commande_formatee = response.choices[0].message.content
 
-    st.success("Commande formatée à envoyer :")
-    st.markdown(f"""
-    ```
-    {commande_formatee}
-    ```
-    """)
+        chaine_json = response.choices[0].message.content
+        commande_dict = json.loads(chaine_json)
 
-    # Plus tard : envoyer via API ou base partagée
-    # st.button("📤 Envoyer au restaurateur")
+    st.success("✅ Commande formatée :")
+    st.json(commande_dict)
 
     os.remove(tmp_path)
